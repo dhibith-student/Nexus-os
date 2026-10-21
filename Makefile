@@ -41,7 +41,8 @@ limine-assets:
 check: $(ISO)
 	@test -s $(KERNEL)
 	@test -s $(ISO)
-	@echo "Kernel and ISO artifacts exist. QEMU boot evidence is still required."
+	@bash tests/check-serial.sh $(BUILD)/serial.log $(KERNEL) $(ISO)
+	@echo "Kernel, ISO, and fresh QEMU serial boot evidence verified."
 
 run: $(ISO)
 	qemu-system-x86_64 -M q35 -m 128M -serial stdio -display none -no-reboot -no-shutdown -cdrom $(ISO)
