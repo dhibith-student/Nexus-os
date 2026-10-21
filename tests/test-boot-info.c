@@ -1,0 +1,3 @@
+#include <stdint.h>
+#include "boot_info.h"
+int main(void){struct nexus_memory_range range;if(!nexus_boot_response_array_valid(0,0,4))return 1;if(!nexus_boot_response_array_valid(2,(void*)1,4))return 2;if(nexus_boot_response_array_valid(2,0,4))return 3;if(nexus_boot_response_array_valid(5,(void*)1,4))return 4;if(!nexus_boot_hhdm_range_to_physical(0xffff800000000000ULL,0xffff800000001000ULL,0x2000,&range))return 5;if(range.start!=0x1000||range.end!=0x3000)return 6;if(nexus_boot_hhdm_range_to_physical(0x1000,0xfff,1,&range))return 7;if(nexus_boot_hhdm_range_to_physical(0,~(uint64_t)0-1,4,&range))return 8;if(!nexus_boot_hhdm_range_to_physical(0,0,0,&range)||range.start!=0||range.end!=0)return 9;return 0;}

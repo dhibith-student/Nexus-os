@@ -51,6 +51,22 @@ int nexus_range_align_frames(struct nexus_memory_range input,
     return 1;
 }
 
+int nexus_range_align_reservation(struct nexus_memory_range input,
+                                  struct nexus_memory_range *aligned) {
+    uint64_t start;
+    uint64_t end;
+    if (aligned == 0 || input.end < input.start) return 0;
+    if (input.start == input.end) {
+        *aligned = input;
+        return 1;
+    }
+    start = input.start & ~(NEXUS_PMM_FRAME_SIZE - 1);
+    if (!align_up(input.end, &end)) return 0;
+    aligned->start = start;
+    aligned->end = end;
+    return 1;
+}
+
 int nexus_reservation_add(struct nexus_reservation_set *set,
                           uint64_t base, uint64_t length) {
     struct nexus_memory_range candidate;

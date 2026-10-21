@@ -17,13 +17,13 @@ DESCRIPTOR_TEST := $(BUILD)/descriptor-test
 PMM_TEST := $(BUILD)/physical-memory-test
 RANGE_TEST := $(BUILD)/memory-ranges-test
 
-.PHONY: all clean limine-assets check test-memory-accounting test-physical-memory test-memory-ranges test-descriptors run
+.PHONY: all clean limine-assets check test-memory-accounting test-physical-memory test-memory-ranges test-descriptors test-boot-info run
 all: $(ISO)
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/main.o: kernel/main.c include/limine.h include/exceptions.h include/memory_accounting.h include/serial.h include/arch_state.h include/kernel_image.h | $(BUILD)
+$(BUILD)/main.o: kernel/main.c include/limine.h include/exceptions.h include/memory_accounting.h include/serial.h include/arch_state.h include/kernel_image.h include/boot_info.h include/memory_ranges.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/serial.o: kernel/serial.c include/serial.h | $(BUILD)
@@ -44,7 +44,10 @@ $(BUILD)/physical_memory.o: kernel/physical_memory.c include/physical_memory.h i
 $(BUILD)/memory_ranges.o: kernel/memory_ranges.c include/memory_ranges.h include/physical_memory.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/kernel_image.o: kernel/kernel_image.c include/kernel_image.h include/serial.h | $(BUILD)
+$(BUILD)/kernel_image.o: kernel/kernel_image.c include/kernel_image.h include/limine.h include/memory_ranges.h include/serial.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/boot_info.o: kernel/boot_info.c include/boot_info.h include/memory_ranges.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/exceptions.o: kernel/exceptions.c include/exceptions.h include/serial.h | $(BUILD)
@@ -56,8 +59,8 @@ $(BUILD)/entry.o: arch/x86_64/entry.S | $(BUILD)
 $(BUILD)/exceptions-asm.o: arch/x86_64/exceptions.S | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/memory_ranges.o $(BUILD)/kernel_image.o $(BUILD)/exceptions.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/memory_ranges.o $(BUILD)/kernel_image.o $(BUILD)/exceptions.o
+$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/memory_ranges.o $(BUILD)/kernel_image.o $(BUILD)/boot_info.o $(BUILD)/exceptions.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/memory_ranges.o $(BUILD)/kernel_image.o $(BUILD)/boot_info.o $(BUILD)/exceptions.o
 	$(OBJCOPY) --only-keep-debug $@ $(BUILD)/nexus.debug
 
 $(ISO): $(KERNEL) limine.conf $(LIMINE)/limine-bios-cd.bin $(LIMINE)/limine-uefi-cd.bin $(LIMINE)/limine-bios.sys
@@ -100,13 +103,19 @@ $(RANGE_TEST): tests/test-memory-ranges.c kernel/memory_ranges.c $(BUILD)/memory
 test-memory-ranges: $(RANGE_TEST)
 	$(RANGE_TEST)
 
-check: $(ISO) test-memory-accounting test-physical-memory test-memory-ranges test-descriptors
+$(BUILD)/boot-info-test: tests/test-boot-info.c kernel/boot_info.c kernel/memory_ranges.c $(BUILD)/memory-test-start.o include/boot_info.h include/memory_ranges.h include/physical_memory.h | $(BUILD)
+	$(CC) $(CFLAGS) -nostdlib -static -no-pie -Wl,-e,_start tests/test-boot-info.c kernel/boot_info.c kernel/memory_ranges.c $(BUILD)/memory-test-start.o -o $@
+
+test-boot-info: $(BUILD)/boot-info-test
+	$(BUILD)/boot-info-test
+
+check: $(ISO) test-memory-accounting test-physical-memory test-memory-ranges test-descriptors test-boot-info
 	@test -s $(KERNEL)
 	@test -s $(ISO)
 	@rm -f $(SERIAL_LOG)
 	@set +e; timeout $(QEMU_TIMEOUT)s $(QEMU) -M q35 -m 128M -serial file:$(SERIAL_LOG) -display none -no-reboot -no-shutdown -boot d -cdrom $(ISO); status=$$?; set -e; if [ "$$status" -ne 124 ]; then echo "QEMU did not reach the expected controlled-halt timeout (status=$$status)" >&2; exit "$$status"; fi
 	@bash tests/check-serial.sh $(SERIAL_LOG) $(KERNEL) $(ISO)
-	@echo "Kernel, ISO, architecture helpers, memory accounting, physical memory core, range helpers, and fresh QEMU serial boot evidence verified."
+	@echo "Kernel, ISO, architecture helpers, memory accounting, physical memory core, range helpers, boot-info helpers, and fresh QEMU serial boot evidence verified."
 
 run: $(ISO)
 	$(QEMU) -M q35 -m 128M -serial stdio -display none -no-reboot -no-shutdown -cdrom $(ISO)

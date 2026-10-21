@@ -23,6 +23,8 @@ int nexus_range_overlaps(struct nexus_memory_range first,
                          struct nexus_memory_range second);
 int nexus_range_align_frames(struct nexus_memory_range input,
                              struct nexus_memory_range *aligned);
+int nexus_range_align_reservation(struct nexus_memory_range input,
+                                  struct nexus_memory_range *aligned);
 int nexus_reservation_add(struct nexus_reservation_set *set,
                           uint64_t base, uint64_t length);
 

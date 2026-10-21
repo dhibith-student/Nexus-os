@@ -2,9 +2,9 @@
 
 ## Phase 2D physical ownership audit
 
-NEXUS requests only the Limine memory-map response through include/limine.h. The response contains an entry count and pointers to entries with physical base, byte length, and memory type. Type 0 is the only type treated as usable by memory accounting and by the offline PMM core. Types 1 through 7 represented in this repository are reserved, ACPI reclaimable, ACPI NVS, bad memory, bootloader reclaimable, executable/modules, and framebuffer respectively; none is immediately allocatable.
+NEXUS requests the Limine HHDM, executable-address, memory-map, module, and framebuffer responses through include/limine.h. The response contains an entry count and pointers to entries with physical base, byte length, and memory type. Type 0 is the only type treated as usable by memory accounting and by the offline PMM core. Types 1 through 7 represented in this repository are reserved, ACPI reclaimable, ACPI NVS, bad memory, bootloader reclaimable, executable/modules, and framebuffer respectively; none is immediately allocatable.
 
-The current source does not request Limine module, framebuffer, higher-half relocation, or complete boot-information responses. Consequently it has no source-level physical ranges for Limine response storage, modules, framebuffer backing memory, or other boot objects. Bootloader-reclaimable entries remain reserved because their lifetime and safe-reclamation point have not been established.
+The source does not request the executable-file or bootloader-info responses because they are not needed for the physical-load audit. HHDM, executable-address, module, and framebuffer responses provide the required address evidence; optional module responses may be absent when no modules are configured. Bootloader-reclaimable entries remain reserved because their lifetime and safe-reclamation point have not been established.
 
 ## ELF and linker evidence
 
@@ -17,13 +17,13 @@ The linker script starts the image at virtual address 0xffffffff80000000 and now
 - Read-only segment: VMA/PAddr fields 0xffffffff80003000, file/memory size 0x63a, read-only.
 - BSS segment: VMA/PAddr fields 0xffffffff80004000, file size 0, memory size 0x1010, read/write.
 
-The section layout contains .limine_requests, .text, .rodata, and .bss. The ELF PAddr fields equal the higher-half VMAs because the linker has no AT physical-load expression. They are therefore not accepted as physical addresses. The exported image symbols are virtual linked bounds and include BSS; they do not identify a physical reservation.
+The section layout contains .limine_requests, .text, .rodata, and .bss. The ELF PAddr fields equal the higher-half VMAs because the linker has no AT physical-load expression. They are therefore not accepted as physical addresses. Limine executable-address runtime evidence supplies physical_base=0x7f44000 and virtual_base=0xffffffff80000000 in the tested boot. The exported image symbols are linked virtual bounds and include BSS; the physical range is derived only after validating that virtual_base matches.
 
 ## Runtime paging and address evidence
 
 QEMU serial diagnostics report CR0=0x80010011, CR2=0, CR3=0x7f9b000, CR4=0x20, and EFER=0xd00, confirming inherited long-mode paging bits in this tested boot. NEXUS does not replace CR3, walk page tables, change mappings, or dereference arbitrary physical addresses. A canonical-looking virtual address is not treated as a physical address.
 
-The runtime reports the linked virtual image and explicitly reports its physical load range as unproven. The current mapping inventory is unknown: source and runtime evidence do not establish which physical pages back the higher-half image or where Limine boot objects are mapped.
+The runtime reports the linked virtual image, the Limine physical load range, and HHDM offset=0xffff800000000000. Limine protocol documentation says response pointers include the HHDM offset and responses reside in bootloader-reclaimable memory. NEXUS still does not walk page tables or dereference arbitrary physical addresses; its inherited mappings are not owned by NEXUS.
 
 ## Reservation model
 
@@ -38,10 +38,17 @@ A future PMM reservation set must include:
 - Bootloader-reclaimable memory until all dependent information is copied and a verified reclamation point exists.
 - Other firmware/platform ranges not explicitly identified as usable.
 
-The existing PMM core accepts explicit reserved physical ranges and is unit-tested, but it is not initialized from the live map. The missing physical kernel range, missing boot-object requests, unknown mappings, and unknown safe bitmap location prevent safe integration.
+The reservation audit represents frame zero, the physical kernel image, bootloader-reclaimable map entries, and HHDM-converted module/framebuffer ranges. It remains diagnostic only: the PMM bitmap location and complete physical ownership of all boot-time objects are not yet established, so the PMM is not initialized from the live map.
 
 ## Pure range tests
 
 memory_ranges.c provides checked half-open range construction, reversed/overflow rejection, adjacency-aware overlap tests, frame alignment, and a reservation set that rejects duplicate or overlapping reservations while accepting empty no-op ranges. Tests cover boundaries, overflow, alignment, kernel-image overlap, reservations, and unsupported memory types. These tests do not perform privileged operations.
 
 A dedicated TSS stack or owned page-table structures cannot be allocated until physical reservations, page-table ownership, and a safe mapped PMM metadata location are established. Scheduling, IPC, user-mode isolation, service supervision, and recovery remain deferred.
+
+
+## Phase 2E evidence and limits
+
+The normal QEMU boot reported one framebuffer and no module response. The framebuffer range was converted from its HHDM pointer using the protocol offset and included in the conservative audit; no framebuffer pixels were accessed. The kernel physical image reported base 0x7f44000, end 0x7f49010, and size 20496 bytes. These are runtime observations for the tested boot, not hard-coded addresses.
+
+Limine supports bootloader-info and executable-file responses, but neither was requested because they would not establish a physical load range beyond executable-address. The response model is bounded to 256 optional entries, rejects null arrays for nonzero counts, rejects HHDM underflow and overflowing ranges, and treats absent module/framebuffer responses as valid optional cases.

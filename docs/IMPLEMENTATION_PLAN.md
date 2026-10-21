@@ -27,7 +27,7 @@ Implemented and verified:
 - Preservation of the PMM as unit-tested only.
 - Normal QEMU evidence that inherited long-mode paging and CR3 remain unchanged.
 
-Key audit result: the ELF PAddr values equal higher-half VMAs because the linker does not define a physical load address. The current Limine requests do not provide module, framebuffer, or complete boot-information ranges. Therefore no physical kernel-image reservation or safe bitmap placement can be derived, and PMM integration is correctly deferred.
+Key Phase 2D result: the ELF PAddr values equal higher-half VMAs because the linker does not define a physical load address. Phase 2E now obtains the physical base from Limine executable-address and audits optional boot objects; PMM integration remains deferred.
 
 ## Reproducible commands
 
@@ -49,12 +49,12 @@ Exception regression:
     timeout 8s qemu-system-x86_64 -M q35 -m 128M -serial file:build/serial-exception.log -display none -no-reboot -no-shutdown -boot d -cdrom build/nexus.iso
     bash tests/check-exception.sh build/serial-exception.log
 
-## Phase 2D evidence
+## Phase 2D evidence (historical)
 
 The default build and fresh QEMU boot passed. Runtime serial output reported:
 
     [kernel] linked virtual image: start=0xffffffff80000000 end=0xffffffff80005010 size=20496
-    [kernel] physical load range: unproven by current linker and boot requests
+    [kernel] physical load range: unproven by the Phase 2D request set
     [arch] paging cr0=0x0000000080010011 cr2=0x0000000000000000 cr3=0x0000000007f9b000 cr4=0x0000000000000020 efer=0x0000000000000d00
     [mem] usable regions: 3
     [mem] usable bytes: 132689920
@@ -66,4 +66,12 @@ The five-vector invalid-opcode regression also passes and reaches fatal controll
 
 ## Phase 2E — recommended next milestone
 
-Request and audit the Limine responses needed to identify modules, framebuffer, and boot information, and establish a linker/load strategy that provides a trustworthy physical kernel image range. Define page-table ownership and a mapped location for PMM metadata before activating allocation or allocating a TSS stack/page-table structures. Do not add scheduling, IPC, user mode, service supervision, or recovery.
+Implemented and verified:
+
+- Pinned Limine v12.9.3 protocol structures for HHDM, executable-address, modules, and framebuffer responses.
+- Runtime physical-load evidence from Limine executable-address: physical base 0x7f44000, virtual base 0xffffffff80000000; linked image span remains 20496 bytes through physical end 0x7f49010 in the tested QEMU boot.
+- HHDM offset reporting and safe HHDM-pointer range conversion without arbitrary physical dereferences.
+- Optional module/framebuffer response validation and bounded diagnostics.
+- Conservative reservation audit for frame zero, the full kernel image, bootloader-reclaimable memory, and identified framebuffer/module ranges.
+
+The PMM remains unit-tested only. Limine response storage is retained by leaving bootloader-reclaimable regions reserved; no reclamation point or bitmap placement has been activated. The linker still has no AT() physical-load expression because Limine supplies the physical base at runtime. A future phase must establish page-table ownership and a safe mapped bitmap location before PMM integration, TSS-stack allocation, or owned page tables. Do not add scheduling, IPC, user mode, service supervision, or recovery.
