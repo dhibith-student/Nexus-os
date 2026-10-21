@@ -1,30 +1,28 @@
-# NEXUS OS initial architecture
+# NEXUS OS architecture
 
-## Phase 1 decision
+## Phase 2A setup
 
-The target is x86-64. The boot protocol is Limine v12.9.3, because it provides a maintained x86-64 boot path and structured boot requests for memory-map information without forcing kernel code to parse BIOS data directly. The build produces an ELF64 kernel and a bootable ISO containing Limine BIOS assets. No physical disk or host boot record is modified.
+Target architecture: x86-64. Boot protocol: Limine v12.9.3, selected for its x86-64 ELF path and structured memory-map request. The build produces an ELF64 kernel and BIOS/UEFI-capable ISO using pinned assets; no physical disk is modified.
 
-The selected build strategy is freestanding C with a small x86-64 assembly entry shim. The default WSL toolchain names are `x86_64-linux-gnu-gcc`, `x86_64-linux-gnu-ld`, and `x86_64-linux-gnu-objcopy`; an `x86_64-elf-*` cross-toolchain can be selected with `make TARGET=x86_64-elf`. The linker places the kernel at `0xffffffff80000000`, so `-mcmodel=kernel` is required to generate relocations valid for that higher-half address. The compiler must produce `-mno-red-zone` code because interrupts and future low-level entry paths may use the current stack. `-ffreestanding` removes hosted-runtime assumptions; `-fno-stack-protector` avoids an unavailable compiler runtime; `-nostdlib -nodefaultlibs -nostartfiles` prevents hosted libraries and startup objects from entering the image. The linker script defines the Limine request sections and the kernel entry point.
+The WSL toolchain is x86_64-linux-gnu-gcc/ld/objcopy, with an equivalent x86_64-elf-* toolchain supported by the Makefile. Kernel compilation is freestanding C plus minimal assembly with -ffreestanding, -fno-stack-protector, -fno-pie, -mcmodel=kernel, -mno-red-zone, and MMX/SSE disabled. Linking uses -nostdlib and linker.ld; the image is linked at 0xffffffff80000000.
 
-## Entry and diagnostics
+Limine transfers control to _start, which calls kernel_main. The kernel remains in bootloader-provided ring 0, uses the existing boot stack, and has no GDT/TSS, privilege transition, page-table ownership, user address space, or context switching. COM1 at I/O port 0x3f8 is configured for 115200 8N1 and receives synchronous diagnostics.
 
-Limine loads the ELF image and transfers control to `_start`, which clears direction flags and calls `kernel_main`. `kernel_main` initializes COM1 at I/O port `0x3f8`, prints the NEXUS banner and stage messages, reports the number and types of memory-map entries returned by Limine, and executes `cli; hlt` in a loop. Serial output is 115200 baud, 8 data bits, no parity, one stop bit. The first validation uses QEMU `-serial stdio -display none`.
+## Exception diagnostics
 
-The panic path prints a fixed diagnostic string and halts. It is intentionally not an exception or interrupt subsystem.
+Phase 2A creates a 256-entry IDT and installs gates for vectors 0 divide error, 6 invalid opcode, 8 double fault, 13 general protection, and 14 page fault. Assembly stubs normalize error-code and non-error-code entries, preserve general registers, and call the C dispatcher. The dispatcher prints vector/name, RIP, CS, RFLAGS, normalized error code, and CR0/CR2/CR3/CR4, then disables interrupts and halts. The frame omits privilege-transition RSP/SS because no ring transition exists. This is not complete exception or external-interrupt coverage.
 
-## Memory-map strategy
+EXCEPTION_TEST=1 executes ud2 after normal initialization. tests/check-exception.sh validates the invalid-opcode diagnostic and fatal halt separately from normal acceptance.
 
-The Limine memory-map request is read-only in Phase 1. The kernel reports entry count and each entry's base, length, and type in hexadecimal. No allocator, page-table mutation, or memory ownership claim is made yet.
+## Memory accounting
 
-## Planned interfaces (not implemented)
+The Limine response is read-only bootloader input. The implementation validates non-null response/entries, caps the count at 4096, checks base-plus-length overflow, and checks total-sum overflow. Only type 0 (usable) entries count; other types are excluded. Output uses bytes and integer MiB computed as bytes / (1024 * 1024). No allocator, page-table mutation, physical reservation, or arbitrary physical-pointer validation is implemented.
 
-- Task model: a kernel-owned task record will contain an ID, state, saved architectural context, address-space reference, and scheduling metadata. The scheduler interface will enqueue, dequeue, block, wake, and select tasks. Context switching will not be added until its assembly contract is reviewed and tested.
-- IPC: a bounded message object will carry a sender task ID, receiver endpoint ID, length, and payload ownership state. Send transfers a copied bounded payload into a kernel-owned queue; receive transfers data out and invalidates the queue slot. Endpoint generation numbers prevent stale references.
-- Service registry and supervisor: the registry will track service name, instance generation, endpoint handles, state, restart count, and restart-window timestamps. The supervisor will validate eligibility and bounded restart policy before creating a new instance.
-- Recovery lifecycle: `RUNNING -> FAILED -> STOPPING -> RESTARTING -> RECONNECTED`, with `QUARANTINED` for policy exhaustion. Old endpoints are invalidated by generation mismatch before the replacement is published.
+## Planned but unimplemented interfaces
 
-Kernel-mode tasks and isolated user-mode services are distinct design targets. User-mode isolation is not implemented or claimed in Phase 1; it requires privilege transitions, page-table/address-space ownership, and tests.
+- Task records will later carry IDs, state, saved context, address-space references, and scheduling metadata.
+- IPC will use bounded copied messages and generation-checked endpoints.
+- A service registry and supervisor will track instances, bounded restart policy, endpoint generations, and recovery states.
+- User-mode isolation requires privilege transitions and page-table ownership and is not claimed.
 
-## Deferred work
-
-Interrupt handling, GDT/IDT, paging and allocators, task switching, scheduling, IPC, privilege separation, user-mode services, service supervision, endpoint reconnection, persistent logging, and recovery tests are deferred. No Phase 1 document should imply that they already work.
+Deferred: complete exception coverage, GDT/TSS, external interrupts, paging/allocation, task switching, scheduling, IPC, privilege separation, services, supervision, endpoint reconnection, and recovery tests.

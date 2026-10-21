@@ -1,51 +1,60 @@
 # Implementation plan
 
-## Phase 1 — boot milestone
+## Phase 1
 
-1. Inspect host, WSL, compiler, linker, build tools, QEMU, and Limine assets.
-2. Keep the repository rulebook and architecture decision under version control.
-3. Build a freestanding ELF64 kernel with Limine.
-4. Create an ISO in `build/` and boot it in QEMU with serial output.
-5. Verify the banner, initialization stages, memory-map report, and controlled halt.
+Phase 1 established the pinned Limine build, bootable ISO, COM1 diagnostics, memory-map dump, and controlled halt. Its working commit remains the rollback milestone.
 
-The documented launch command is `make run` (equivalent to `qemu-system-x86_64 -M q35 -m 128M -serial stdio -display none -no-reboot -no-shutdown -cdrom build/nexus.iso`). With the Phase 1 halt loop, exit QEMU safely from the terminal using `Ctrl-A`, then `X`.
+## Phase 2A — complete
 
-The acceptance evidence is the exact build output, QEMU command, captured serial output, and a successful exit after the kernel's halt condition. Compilation without QEMU evidence is not sufficient.
+Implemented and tested:
 
-## Windows/WSL setup when dependencies are missing
+- IDT gates for vectors 0, 6, 8, 13, and 14.
+- Assembly normalization for CPU exceptions with and without pushed error codes.
+- C diagnostics for vector/name, RIP, CS, RFLAGS, error code, and CR0/CR2/CR3/CR4.
+- Fatal exception path with interrupts disabled and controlled halt.
+- Overflow-safe accounting of Limine type-0 usable memory.
+- Focused memory-accounting tests for valid input, invalid input, and overflow.
+- Separate EXCEPTION_TEST=1 QEMU fixture that triggers ud2.
 
-These commands install packages inside the existing Ubuntu WSL2 distribution; they do not modify physical disks or Windows boot configuration:
+The normal make check target requires current kernel/ISO artifacts, a serial log newer than both artifacts, expected startup and memory-accounting lines, deferred-feature lines, and controlled halt. The exception fixture uses tests/check-exception.sh and is intentionally separate.
 
-```powershell
-wsl --update
-wsl -d Ubuntu -- sudo apt update
-wsl -d Ubuntu -- sudo apt install -y gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu make xorriso qemu-system-x86 git curl ca-certificates
-```
+## Reproducible setup
 
-Verify the toolchain before building:
+Install in Ubuntu under WSL2:
 
-```powershell
-wsl -d Ubuntu -- bash -lc 'command -v x86_64-linux-gnu-gcc x86_64-linux-gnu-ld make xorriso qemu-system-x86_64'
-```
+    wsl --update
+    wsl -d Ubuntu -- sudo apt update
+    wsl -d Ubuntu -- sudo apt install -y gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu make xorriso qemu-system-x86 git curl ca-certificates
 
-Limine v12.9.3 binary assets are placed under `tools/limine/` with the three filenames required by the Makefile: `limine-bios.sys`, `limine-bios-cd.bin`, and `limine-uefi-cd.bin`. Run `make limine-assets` to download the pinned archive, verify SHA-256 `e02a473c6dc6df25159697f94930272397f21fd86e5d4eeee61bba72c95ec8d2`, and extract only those files. The source URL is `https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.3/limine-binary.tar.xz`. The Limine configuration uses the v12 template syntax in `limine.conf`: `protocol: limine` and `path: boot():/boot/nexus.elf`.
+Verify:
 
-## Verified Phase 1 evidence
+    wsl -d Ubuntu -- bash -lc 'command -v x86_64-linux-gnu-gcc x86_64-linux-gnu-ld make xorriso qemu-system-x86_64'
 
-On 2026-10-21, WSL2 Ubuntu built `build/nexus.elf` and `build/nexus.iso` successfully. Headless QEMU booted the ISO and COM1 produced the NEXUS banner, initialization diagnostics, 20 memory-map entries, deferred-feature messages, and `[halt] initialization complete; controlled halt`. `tests/check-serial.sh build/serial.log` passed. QEMU was terminated by an 8-second test timeout after the guest reached its intentional halt loop; this is expected because Phase 1 does not power off the virtual machine.
+Obtain pinned assets:
 
-## Phase 2 — kernel foundations
+    make limine-assets
 
-Add reviewed GDT/IDT setup, exception diagnostics, physical memory accounting, paging, and a tested task/context representation. Preserve the Phase 1 boot image as a Git milestone.
+Normal build and boot:
 
-## Phase 3 — scheduling and IPC
+    make clean
+    make
+    rm -f build/serial.log
+    timeout 8s qemu-system-x86_64 -M q35 -m 128M -serial file:build/serial.log -display none -no-reboot -no-shutdown -boot d -cdrom build/nexus.iso
+    bash tests/check-serial.sh build/serial.log build/nexus.elf build/nexus.iso
+    make check
 
-Add a bounded scheduler and kernel IPC endpoints only after their interfaces are agreed. Add deterministic unit/fixture tests and QEMU integration evidence. Do not claim isolation until privilege and memory mechanisms are present.
+Controlled exception boot:
 
-## Phase 4 — services and recovery
+    make clean
+    make EXCEPTION_TEST=1
+    rm -f build/serial-exception.log
+    timeout 8s qemu-system-x86_64 -M q35 -m 128M -serial file:build/serial-exception.log -display none -no-reboot -no-shutdown -boot d -cdrom build/nexus.iso
+    bash tests/check-exception.sh build/serial-exception.log
 
-Add the registry, supervisor state machine, bounded restart policy, service generations, endpoint invalidation, reconnection, and failure-injection tests. Member B must integrate only against documented kernel interfaces.
+On 2026-10-22, normal QEMU evidence and make check passed. The output reported 20 entries, 3 usable regions, 132702208 bytes, 126 MiB, deferred features, and controlled halt. The separate exception QEMU evidence and check-exception.sh also passed; its timeout was expected because the guest halts.
 
-## Required evidence per milestone
+## Phase 2B — recommended next milestone
 
-Each milestone must record changed files, commands, observed results, known defects, and the next milestone. A known-working bootable kernel must remain recoverable through a Git commit.
+Review and test the architectural context contract, then add minimum GDT/TSS and page-table foundations. Do not implement scheduling, IPC, user mode, service supervision, or recovery until their mechanisms and tests exist.
+
+Every milestone must report changed files, commands, observed results, defects, and next milestone. Do not commit or push automatically during verification.

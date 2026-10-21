@@ -1,36 +1,28 @@
 # NEXUS OS
 
-**NEXUS OS: A Self-Healing Microkernel with Dependency-Aware Service Recovery**
+NEXUS OS is a real freestanding x86-64 kernel prototype. Phase 2A is implemented and verified: Limine v12.9.3 boot, COM1 diagnostics, a bounded exception subset, and read-only usable-memory accounting. Scheduling, IPC, user-mode isolation, memory protection, service supervision, and recovery remain unimplemented.
 
-This repository contains the Phase 1 foundation for a real x86-64 kernel prototype. The current milestone is a small Limine-booted freestanding kernel that writes diagnostics to COM1 and safely halts after initialization. It does not yet implement task scheduling, IPC, user-mode isolation, memory protection, or service recovery.
+## Verified status
 
-## Current status
+Normal headless QEMU boot reports the Limine memory map, 3 usable regions, 132702208 usable bytes (126 MiB with the tested 128 MiB QEMU configuration), deferred-feature messages, and controlled halt. A separate EXCEPTION_TEST=1 QEMU boot triggers and diagnoses invalid opcode vector 6, then enters the fatal controlled-halt loop. Installed exception vectors are only 0, 6, 8, 13, and 14.
 
-Phase 1 boot validation is complete in WSL2 Ubuntu with Limine v12.9.3: the kernel builds, the ISO is produced, QEMU reaches `kernel_main`, COM1 reports 20 memory-map entries, and the kernel reaches its controlled halt. Later-phase scheduling, IPC, user-mode isolation, memory protection, and service recovery remain unimplemented.
+Memory accounting counts only Limine type-0 usable entries, bounds the entry count, checks base-plus-length and sum overflow, and reports bytes plus integer MiB. It does not allocate or modify physical memory.
 
-## Toolchain
+## Toolchain and commands
 
-The documented build environment is Ubuntu under WSL2 with:
+The documented WSL environment uses x86_64-linux-gnu-gcc/binutils, GNU Make, Limine v12.9.3 assets, xorriso, and qemu-system-x86_64. See docs/ARCHITECTURE.md and docs/IMPLEMENTATION_PLAN.md.
 
-- `x86_64-elf-gcc` and `x86_64-elf-binutils`, or an equivalent GCC that supports freestanding x86-64 output;
-- GNU Make;
-- Limine v12.9.3 binary assets;
-- `xorriso` for ISO creation;
-- `qemu-system-x86_64` for validation.
+    make limine-assets
+    make
+    make check
+    make run
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the exact assumptions and setup commands.
+Controlled exception test:
 
-## Commands
+    make clean
+    make EXCEPTION_TEST=1
+    rm -f build/serial-exception.log
+    timeout 8s qemu-system-x86_64 -M q35 -m 128M -serial file:build/serial-exception.log -display none -no-reboot -no-shutdown -boot d -cdrom build/nexus.iso
+    bash tests/check-exception.sh build/serial-exception.log
 
-From WSL, in the repository directory:
-
-```sh
-make limine-assets
-make
-make check
-make run
-```
-
-`make run` emits serial output in the terminal and leaves QEMU at the kernel's controlled halt. Exit safely with `Ctrl-A`, then `X` in the QEMU terminal. It uses only a disposable ISO under `build/`; it never touches a physical disk.
-
-Before every change, read [AGENTS.md](AGENTS.md), inspect source and Git state, and preserve the last known-working bootable commit.
+The timeout is expected because the guest intentionally halts. Images are disposable files under build/; no physical disk or host boot record is touched. Read AGENTS.md before every change.

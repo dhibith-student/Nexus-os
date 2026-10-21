@@ -2,27 +2,41 @@ TARGET ?= x86_64-linux-gnu
 CC := $(TARGET)-gcc
 LD := $(TARGET)-ld
 OBJCOPY := $(TARGET)-objcopy
-CFLAGS := -std=c11 -ffreestanding -fno-stack-protector -fno-pie -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -Wall -Wextra -Werror -O2 -Iinclude
+EXCEPTION_TEST ?= 0
+CFLAGS := -std=c11 -ffreestanding -fno-stack-protector -fno-pie -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -Wall -Wextra -Werror -O2 -Iinclude -DNEXUS_EXCEPTION_TEST=$(EXCEPTION_TEST)
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T linker.ld
 BUILD := build
 LIMINE := tools/limine
 KERNEL := $(BUILD)/nexus.elf
 ISO := $(BUILD)/nexus.iso
+MEMORY_TEST := $(BUILD)/memory-accounting-test
 
-.PHONY: all clean limine-assets check run
+.PHONY: all clean limine-assets check test-memory-accounting run
 all: $(ISO)
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/main.o: kernel/main.c include/limine.h | $(BUILD)
+$(BUILD)/main.o: kernel/main.c include/limine.h include/exceptions.h include/memory_accounting.h include/serial.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/serial.o: kernel/serial.c include/serial.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/memory_accounting.o: kernel/memory_accounting.c include/memory_accounting.h include/limine.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/exceptions.o: kernel/exceptions.c include/exceptions.h include/serial.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/entry.o: arch/x86_64/entry.S | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL): $(BUILD)/entry.o $(BUILD)/main.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/main.o
+$(BUILD)/exceptions-asm.o: arch/x86_64/exceptions.S | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/exceptions.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/exceptions.o
 	$(OBJCOPY) --only-keep-debug $@ $(BUILD)/nexus.debug
 
 $(ISO): $(KERNEL) limine.conf $(LIMINE)/limine-bios-cd.bin $(LIMINE)/limine-uefi-cd.bin $(LIMINE)/limine-bios.sys
@@ -38,11 +52,20 @@ $(ISO): $(KERNEL) limine.conf $(LIMINE)/limine-bios-cd.bin $(LIMINE)/limine-uefi
 limine-assets:
 	bash scripts/fetch-limine.sh
 
-check: $(ISO)
+$(BUILD)/memory-test-start.o: tests/test-start.S | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(MEMORY_TEST): tests/test-memory-accounting.c kernel/memory_accounting.c $(BUILD)/memory-test-start.o include/memory_accounting.h include/limine.h | $(BUILD)
+	$(CC) $(CFLAGS) -nostdlib -static -no-pie -Wl,-e,_start tests/test-memory-accounting.c kernel/memory_accounting.c $(BUILD)/memory-test-start.o -o $@
+
+test-memory-accounting: $(MEMORY_TEST)
+	$(MEMORY_TEST)
+
+check: $(ISO) test-memory-accounting
 	@test -s $(KERNEL)
 	@test -s $(ISO)
 	@bash tests/check-serial.sh $(BUILD)/serial.log $(KERNEL) $(ISO)
-	@echo "Kernel, ISO, and fresh QEMU serial boot evidence verified."
+	@echo "Kernel, ISO, memory accounting, and fresh QEMU serial boot evidence verified."
 
 run: $(ISO)
 	qemu-system-x86_64 -M q35 -m 128M -serial stdio -display none -no-reboot -no-shutdown -cdrom $(ISO)
