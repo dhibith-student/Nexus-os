@@ -1,0 +1,7 @@
+/build/
+/tools/limine/
+*.log
+*.iso
+*.img
+*.o
+*.elf
