@@ -3,8 +3,17 @@
 
 __attribute__((used, section(".limine_requests")))
 volatile struct limine_memmap_request memmap_request = {
-    { LIMINE_COMMON_MAGIC, LIMINE_MEMORY_MAP_REQUEST_ID, 0 }, 0, 0
+    { LIMINE_COMMON_MAGIC, LIMINE_MEMORY_MAP_REQUEST_ID }, 0, 0
 };
+
+__attribute__((used, section(".limine_requests")))
+volatile uint64_t limine_base_revision[] = { LIMINE_BASE_REVISION(6) };
+
+__attribute__((used, section(".limine_requests_start")))
+volatile uint64_t limine_requests_start_marker[] = { LIMINE_REQUESTS_START_MARKER };
+
+__attribute__((used, section(".limine_requests_end")))
+volatile uint64_t limine_requests_end_marker[] = { LIMINE_REQUESTS_END_MARKER };
 
 static void serial_init(void) {
     __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x00), "Nd"((uint16_t)0x3f9));

@@ -2,9 +2,9 @@
 
 ## Phase 1 decision
 
-The target is x86-64. The boot protocol is Limine, because it provides a maintained x86-64 boot path and structured boot requests for memory-map information without forcing kernel code to parse BIOS data directly. The build produces an ELF64 kernel and a bootable ISO containing Limine BIOS assets. No physical disk or host boot record is modified.
+The target is x86-64. The boot protocol is Limine v12.9.3, because it provides a maintained x86-64 boot path and structured boot requests for memory-map information without forcing kernel code to parse BIOS data directly. The build produces an ELF64 kernel and a bootable ISO containing Limine BIOS assets. No physical disk or host boot record is modified.
 
-The selected build strategy is freestanding C with a small x86-64 assembly entry shim. The default WSL toolchain names are `x86_64-linux-gnu-gcc`, `x86_64-linux-gnu-ld`, and `x86_64-linux-gnu-objcopy`; an `x86_64-elf-*` cross-toolchain can be selected with `make TARGET=x86_64-elf`. The compiler must produce `-mno-red-zone` code because interrupts and future low-level entry paths may use the current stack. `-ffreestanding` removes hosted-runtime assumptions; `-fno-stack-protector` avoids an unavailable compiler runtime; `-nostdlib -nodefaultlibs -nostartfiles` prevents hosted libraries and startup objects from entering the image. The linker script defines the Limine request sections and the kernel entry point.
+The selected build strategy is freestanding C with a small x86-64 assembly entry shim. The default WSL toolchain names are `x86_64-linux-gnu-gcc`, `x86_64-linux-gnu-ld`, and `x86_64-linux-gnu-objcopy`; an `x86_64-elf-*` cross-toolchain can be selected with `make TARGET=x86_64-elf`. The linker places the kernel at `0xffffffff80000000`, so `-mcmodel=kernel` is required to generate relocations valid for that higher-half address. The compiler must produce `-mno-red-zone` code because interrupts and future low-level entry paths may use the current stack. `-ffreestanding` removes hosted-runtime assumptions; `-fno-stack-protector` avoids an unavailable compiler runtime; `-nostdlib -nodefaultlibs -nostartfiles` prevents hosted libraries and startup objects from entering the image. The linker script defines the Limine request sections and the kernel entry point.
 
 ## Entry and diagnostics
 

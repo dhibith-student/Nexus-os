@@ -8,6 +8,8 @@
 4. Create an ISO in `build/` and boot it in QEMU with serial output.
 5. Verify the banner, initialization stages, memory-map report, and controlled halt.
 
+The documented launch command is `make run` (equivalent to `qemu-system-x86_64 -M q35 -m 128M -serial stdio -display none -no-reboot -no-shutdown -cdrom build/nexus.iso`). With the Phase 1 halt loop, exit QEMU safely from the terminal using `Ctrl-A`, then `X`.
+
 The acceptance evidence is the exact build output, QEMU command, captured serial output, and a successful exit after the kernel's halt condition. Compilation without QEMU evidence is not sufficient.
 
 ## Windows/WSL setup when dependencies are missing
@@ -26,7 +28,11 @@ Verify the toolchain before building:
 wsl -d Ubuntu -- bash -lc 'command -v x86_64-linux-gnu-gcc x86_64-linux-gnu-ld make xorriso qemu-system-x86_64'
 ```
 
-Limine binary assets must then be placed under `tools/limine/` with the three filenames required by the Makefile: `limine-bios.sys`, `limine-bios-cd.bin`, and `limine-uefi-cd.bin`. Obtain those files from a pinned Limine binary release and record the release version in the next Git commit; do not silently substitute assets from another boot protocol.
+Limine v12.9.3 binary assets are placed under `tools/limine/` with the three filenames required by the Makefile: `limine-bios.sys`, `limine-bios-cd.bin`, and `limine-uefi-cd.bin`. Run `make limine-assets` to download the pinned archive, verify SHA-256 `e02a473c6dc6df25159697f94930272397f21fd86e5d4eeee61bba72c95ec8d2`, and extract only those files. The source URL is `https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.3/limine-binary.tar.xz`. The Limine configuration uses the v12 template syntax in `limine.conf`: `protocol: limine` and `path: boot():/boot/nexus.elf`.
+
+## Verified Phase 1 evidence
+
+On 2026-10-21, WSL2 Ubuntu built `build/nexus.elf` and `build/nexus.iso` successfully. Headless QEMU booted the ISO and COM1 produced the NEXUS banner, initialization diagnostics, 20 memory-map entries, deferred-feature messages, and `[halt] initialization complete; controlled halt`. `tests/check-serial.sh build/serial.log` passed. QEMU was terminated by an 8-second test timeout after the guest reached its intentional halt loop; this is expected because Phase 1 does not power off the virtual machine.
 
 ## Phase 2 — kernel foundations
 
