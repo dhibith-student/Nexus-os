@@ -6,19 +6,24 @@ Phase 1 established the pinned Limine build, bootable ISO, COM1 diagnostics, mem
 
 ## Phase 2A — complete
 
+Phase 2A added and tested five CPU exception gates, normalized exception frames, fatal diagnostics, overflow-safe usable-memory accounting, and separate normal/exception QEMU checks.
+
+## Phase 2B — complete
+
 Implemented and tested:
 
-- IDT gates for vectors 0, 6, 8, 13, and 14.
-- Assembly normalization for CPU exceptions with and without pushed error codes.
-- C diagnostics for vector/name, RIP, CS, RFLAGS, error code, and CR0/CR2/CR3/CR4.
-- Fatal exception path with interrupts disabled and controlled halt.
-- Overflow-safe accounting of Limine type-0 usable memory.
-- Focused memory-accounting tests for valid input, invalid input, and overflow.
-- Separate EXCEPTION_TEST=1 QEMU fixture that triggers ud2.
+- Read-only diagnostics for inherited segment selectors, GDTR, IDTR, TR, CR0, CR2, CR3, CR4, and EFER.
+- Explicit documentation of ring-0 and boot-stack assumptions.
+- A pure segment-descriptor constructor.
+- A packed 104-byte x86-64 TSS layout and initializer.
+- Focused freestanding tests for code/data descriptor encodings and TSS initialization.
+- Normal QEMU evidence that Limine-provided long-mode paging remains active.
+- Regression coverage for normal serial acceptance, memory accounting, and the controlled invalid-opcode path.
 
-The normal make check target requires current kernel/ISO artifacts, a serial log newer than both artifacts, expected startup and memory-accounting lines, deferred-feature lines, and controlled halt. The exception fixture uses tests/check-exception.sh and is intentionally separate.
+The implementation deliberately does not execute LGDT, LTR, reload segment registers, replace CR3, walk or modify page tables, allocate a TSS stack, enter user mode, or add a scheduler. The descriptor and TSS helpers are construction foundations only.
+The normal make check target builds the artifacts and focused tests, boots QEMU with the documented timeout, captures fresh build/serial.log evidence, and validates the required startup, architectural-state, memory-accounting, deferred-feature, and controlled-halt lines.
 
-## Reproducible setup
+## Reproducible commands
 
 Install in Ubuntu under WSL2:
 
@@ -34,13 +39,15 @@ Obtain pinned assets:
 
     make limine-assets
 
-Normal build and boot:
+Build and normal boot:
 
     make clean
     make
     rm -f build/serial.log
     timeout 8s qemu-system-x86_64 -M q35 -m 128M -serial file:build/serial.log -display none -no-reboot -no-shutdown -boot d -cdrom build/nexus.iso
     bash tests/check-serial.sh build/serial.log build/nexus.elf build/nexus.iso
+    make test-memory-accounting
+    make test-descriptors
     make check
 
 Controlled exception boot:
@@ -51,10 +58,12 @@ Controlled exception boot:
     timeout 8s qemu-system-x86_64 -M q35 -m 128M -serial file:build/serial-exception.log -display none -no-reboot -no-shutdown -boot d -cdrom build/nexus.iso
     bash tests/check-exception.sh build/serial-exception.log
 
-On 2026-10-22, normal QEMU evidence and make check passed. The output reported 20 entries, 3 usable regions, 132702208 bytes, 126 MiB, deferred features, and controlled halt. The separate exception QEMU evidence and check-exception.sh also passed; its timeout was expected because the guest halts.
+## Phase 2B evidence
 
-## Phase 2B — recommended next milestone
+On 2026-10-22, the default build completed and QEMU booted the kernel. The serial log reported ring-0 selectors CS=0x28, DS/ES/SS=0x30, TR=0x38, GDTR limit 0x47, an initially empty IDTR, and active inherited long-mode paging with CR3=0x7f9b000. The normal serial check passed, the memory-accounting and descriptor tests passed, and git diff --check passed. The controlled exception procedure remains required after the final default rebuild and must continue to pass; it does not run during normal startup.
 
-Review and test the architectural context contract, then add minimum GDT/TSS and page-table foundations. Do not implement scheduling, IPC, user mode, service supervision, or recovery until their mechanisms and tests exist.
+QEMU is terminated by the eight-second timeout because the guest intentionally remains in a halt loop. This is expected and is not a guest shutdown result.
 
-Every milestone must report changed files, commands, observed results, defects, and next milestone. Do not commit or push automatically during verification.
+## Phase 2C — recommended next milestone
+
+Design and review ownership of a NEXUS GDT/TSS and page-table subsystem, including allocation and mapping requirements for a dedicated TSS stack. Validate the design before any LGDT, LTR, CR3, or page-table mutation. Scheduling, IPC, user mode, service supervision, and recovery remain out of scope.

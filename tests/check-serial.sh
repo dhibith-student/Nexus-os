@@ -14,6 +14,11 @@ fi
 grep -F "NEXUS OS - Phase 2A" "$log" >/dev/null
 grep -F "[init] serial console: ready" "$log" >/dev/null
 grep -F "[init] kernel entry: reached" "$log" >/dev/null
+grep -F "[init] architectural state: inspected; inherited GDT/TSS/paging preserved" "$log" >/dev/null
+grep -F "[arch] segments cs=" "$log" >/dev/null
+grep -F "[arch] gdtr base=" "$log" >/dev/null
+grep -F "[arch] paging cr0=" "$log" >/dev/null
+grep -F "[arch] paging mode: inherited long mode paging; NEXUS did not replace CR3" "$log" >/dev/null
 grep -F "[init] exception diagnostics: ready" "$log" >/dev/null
 grep -Eq '^\[init\] memory map entries: 0x?[1-9][0-9]*[[:space:]]*$|^\[init\] memory map entries: [1-9][0-9]*[[:space:]]*$' "$log"
 test "$(grep -Ec '^\[mem\] base=0x[0-9a-fA-F]+ length=0x[0-9a-fA-F]+ type=0x[0-9a-fA-F]+[[:space:]]*$' "$log")" -gt 0

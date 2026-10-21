@@ -2,6 +2,8 @@ TARGET ?= x86_64-linux-gnu
 CC := $(TARGET)-gcc
 LD := $(TARGET)-ld
 OBJCOPY := $(TARGET)-objcopy
+QEMU ?= qemu-system-x86_64
+QEMU_TIMEOUT ?= 8
 EXCEPTION_TEST ?= 0
 CFLAGS := -std=c11 -ffreestanding -fno-stack-protector -fno-pie -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -Wall -Wextra -Werror -O2 -Iinclude -DNEXUS_EXCEPTION_TEST=$(EXCEPTION_TEST)
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T linker.ld
@@ -9,21 +11,29 @@ BUILD := build
 LIMINE := tools/limine
 KERNEL := $(BUILD)/nexus.elf
 ISO := $(BUILD)/nexus.iso
+SERIAL_LOG := $(BUILD)/serial.log
 MEMORY_TEST := $(BUILD)/memory-accounting-test
+DESCRIPTOR_TEST := $(BUILD)/descriptor-test
 
-.PHONY: all clean limine-assets check test-memory-accounting run
+.PHONY: all clean limine-assets check test-memory-accounting test-descriptors run
 all: $(ISO)
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/main.o: kernel/main.c include/limine.h include/exceptions.h include/memory_accounting.h include/serial.h | $(BUILD)
+$(BUILD)/main.o: kernel/main.c include/limine.h include/exceptions.h include/memory_accounting.h include/serial.h include/arch_state.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/serial.o: kernel/serial.c include/serial.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/memory_accounting.o: kernel/memory_accounting.c include/memory_accounting.h include/limine.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/descriptors.o: kernel/descriptors.c include/descriptors.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/arch_state.o: kernel/arch_state.c include/arch_state.h include/serial.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/exceptions.o: kernel/exceptions.c include/exceptions.h include/serial.h | $(BUILD)
@@ -35,8 +45,8 @@ $(BUILD)/entry.o: arch/x86_64/entry.S | $(BUILD)
 $(BUILD)/exceptions-asm.o: arch/x86_64/exceptions.S | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/exceptions.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/exceptions.o
+$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/exceptions.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/exceptions.o
 	$(OBJCOPY) --only-keep-debug $@ $(BUILD)/nexus.debug
 
 $(ISO): $(KERNEL) limine.conf $(LIMINE)/limine-bios-cd.bin $(LIMINE)/limine-uefi-cd.bin $(LIMINE)/limine-bios.sys
@@ -61,14 +71,22 @@ $(MEMORY_TEST): tests/test-memory-accounting.c kernel/memory_accounting.c $(BUIL
 test-memory-accounting: $(MEMORY_TEST)
 	$(MEMORY_TEST)
 
-check: $(ISO) test-memory-accounting
+$(DESCRIPTOR_TEST): tests/test-descriptors.c kernel/descriptors.c $(BUILD)/memory-test-start.o include/descriptors.h | $(BUILD)
+	$(CC) $(CFLAGS) -nostdlib -static -no-pie -Wl,-e,_start tests/test-descriptors.c kernel/descriptors.c $(BUILD)/memory-test-start.o -o $@
+
+test-descriptors: $(DESCRIPTOR_TEST)
+	$(DESCRIPTOR_TEST)
+
+check: $(ISO) test-memory-accounting test-descriptors
 	@test -s $(KERNEL)
 	@test -s $(ISO)
-	@bash tests/check-serial.sh $(BUILD)/serial.log $(KERNEL) $(ISO)
-	@echo "Kernel, ISO, memory accounting, and fresh QEMU serial boot evidence verified."
+	@rm -f $(SERIAL_LOG)
+	@set +e; timeout $(QEMU_TIMEOUT)s $(QEMU) -M q35 -m 128M -serial file:$(SERIAL_LOG) -display none -no-reboot -no-shutdown -boot d -cdrom $(ISO); status=$$?; set -e; if [ "$$status" -ne 124 ]; then echo "QEMU did not reach the expected controlled-halt timeout (status=$$status)" >&2; exit "$$status"; fi
+	@bash tests/check-serial.sh $(SERIAL_LOG) $(KERNEL) $(ISO)
+	@echo "Kernel, ISO, architecture helpers, memory accounting, and fresh QEMU serial boot evidence verified."
 
 run: $(ISO)
-	qemu-system-x86_64 -M q35 -m 128M -serial stdio -display none -no-reboot -no-shutdown -cdrom $(ISO)
+	$(QEMU) -M q35 -m 128M -serial stdio -display none -no-reboot -no-shutdown -cdrom $(ISO)
 
 clean:
 	rm -rf $(BUILD)

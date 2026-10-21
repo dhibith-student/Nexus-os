@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "arch_state.h"
 #include "exceptions.h"
 #include "limine.h"
 #include "memory_accounting.h"
@@ -42,6 +43,12 @@ void kernel_main(void) {
     serial_write("NEXUS OS - Phase 2A\r\n");
     serial_write("[init] serial console: ready\r\n");
     serial_write("[init] kernel entry: reached\r\n");
+
+    struct nexus_arch_state inherited_state;
+    nexus_arch_state_read(&inherited_state);
+    nexus_arch_state_print(&inherited_state);
+    serial_write("[init] architectural state: inspected; inherited GDT/TSS/paging preserved\r\n");
+
     exceptions_init();
     serial_write("[init] exception diagnostics: ready (vectors 0, 6, 8, 13, 14)\r\n");
     const struct limine_memmap_response *response = memmap_request.response;
