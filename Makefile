@@ -14,8 +14,9 @@ ISO := $(BUILD)/nexus.iso
 SERIAL_LOG := $(BUILD)/serial.log
 MEMORY_TEST := $(BUILD)/memory-accounting-test
 DESCRIPTOR_TEST := $(BUILD)/descriptor-test
+PMM_TEST := $(BUILD)/physical-memory-test
 
-.PHONY: all clean limine-assets check test-memory-accounting test-descriptors run
+.PHONY: all clean limine-assets check test-memory-accounting test-descriptors test-physical-memory run
 all: $(ISO)
 
 $(BUILD):
@@ -36,6 +37,9 @@ $(BUILD)/descriptors.o: kernel/descriptors.c include/descriptors.h | $(BUILD)
 $(BUILD)/arch_state.o: kernel/arch_state.c include/arch_state.h include/serial.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/physical_memory.o: kernel/physical_memory.c include/physical_memory.h include/limine.h include/memory_accounting.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/exceptions.o: kernel/exceptions.c include/exceptions.h include/serial.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -45,8 +49,8 @@ $(BUILD)/entry.o: arch/x86_64/entry.S | $(BUILD)
 $(BUILD)/exceptions-asm.o: arch/x86_64/exceptions.S | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/exceptions.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/exceptions.o
+$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/exceptions.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/exceptions.o
 	$(OBJCOPY) --only-keep-debug $@ $(BUILD)/nexus.debug
 
 $(ISO): $(KERNEL) limine.conf $(LIMINE)/limine-bios-cd.bin $(LIMINE)/limine-uefi-cd.bin $(LIMINE)/limine-bios.sys
@@ -77,13 +81,19 @@ $(DESCRIPTOR_TEST): tests/test-descriptors.c kernel/descriptors.c $(BUILD)/memor
 test-descriptors: $(DESCRIPTOR_TEST)
 	$(DESCRIPTOR_TEST)
 
-check: $(ISO) test-memory-accounting test-descriptors
+$(PMM_TEST): tests/test-physical-memory.c kernel/physical_memory.c $(BUILD)/memory-test-start.o include/physical_memory.h include/limine.h include/memory_accounting.h | $(BUILD)
+	$(CC) $(CFLAGS) -nostdlib -static -no-pie -Wl,-e,_start tests/test-physical-memory.c kernel/physical_memory.c $(BUILD)/memory-test-start.o -o $@
+
+test-physical-memory: $(PMM_TEST)
+	$(PMM_TEST)
+
+check: $(ISO) test-memory-accounting test-descriptors test-physical-memory
 	@test -s $(KERNEL)
 	@test -s $(ISO)
 	@rm -f $(SERIAL_LOG)
 	@set +e; timeout $(QEMU_TIMEOUT)s $(QEMU) -M q35 -m 128M -serial file:$(SERIAL_LOG) -display none -no-reboot -no-shutdown -boot d -cdrom $(ISO); status=$$?; set -e; if [ "$$status" -ne 124 ]; then echo "QEMU did not reach the expected controlled-halt timeout (status=$$status)" >&2; exit "$$status"; fi
 	@bash tests/check-serial.sh $(SERIAL_LOG) $(KERNEL) $(ISO)
-	@echo "Kernel, ISO, architecture helpers, memory accounting, and fresh QEMU serial boot evidence verified."
+	@echo "Kernel, ISO, architecture helpers, memory accounting, physical memory core, and fresh QEMU serial boot evidence verified."
 
 run: $(ISO)
 	$(QEMU) -M q35 -m 128M -serial stdio -display none -no-reboot -no-shutdown -cdrom $(ISO)

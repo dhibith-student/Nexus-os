@@ -57,6 +57,7 @@ void kernel_main(void) {
     struct nexus_memory_summary summary;
     if (!nexus_memory_accounting(response, &summary)) panic("memory accounting validation failed");
     serial_write("[mem] usable regions: "); serial_dec(summary.usable_regions); serial_write("\r\n[mem] usable bytes: "); serial_dec(summary.usable_bytes); serial_write("\r\n[mem] usable MiB: "); serial_dec(summary.usable_bytes / (1024ULL * 1024ULL)); serial_write("\r\n");
+    serial_write("[init] physical memory allocator: unit-tested only; runtime integration deferred\r\n");
     trigger_exception_test();
     serial_write("[init] scheduler: deferred to Phase 2\r\n");
     serial_write("[init] IPC and recovery: deferred to later phases\r\n");

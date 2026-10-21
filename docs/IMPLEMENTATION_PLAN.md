@@ -2,55 +2,41 @@
 
 ## Phase 1
 
-Phase 1 established the pinned Limine build, bootable ISO, COM1 diagnostics, memory-map dump, and controlled halt. Its working commit remains the rollback milestone.
+Established the pinned Limine build, bootable ISO, COM1 diagnostics, memory-map dump, and controlled halt.
 
-## Phase 2A — complete
+## Phase 2A
 
-Phase 2A added and tested five CPU exception gates, normalized exception frames, fatal diagnostics, overflow-safe usable-memory accounting, and separate normal/exception QEMU checks.
+Added and tested five CPU exception gates, normalized exception frames, fatal diagnostics, and overflow-safe usable-memory accounting.
 
-## Phase 2B — complete
+## Phase 2B
 
-Implemented and tested:
+Added read-only inherited GDT/TSS/paging diagnostics and tested descriptor/TSS construction helpers without loading new architectural tables or changing CR3.
 
-- Read-only diagnostics for inherited segment selectors, GDTR, IDTR, TR, CR0, CR2, CR3, CR4, and EFER.
-- Explicit documentation of ring-0 and boot-stack assumptions.
-- A pure segment-descriptor constructor.
-- A packed 104-byte x86-64 TSS layout and initializer.
-- Focused freestanding tests for code/data descriptor encodings and TSS initialization.
-- Normal QEMU evidence that Limine-provided long-mode paging remains active.
-- Regression coverage for normal serial acceptance, memory accounting, and the controlled invalid-opcode path.
+## Phase 2C — complete as a non-integrated foundation
 
-The implementation deliberately does not execute LGDT, LTR, reload segment registers, replace CR3, walk or modify page tables, allocate a TSS stack, enter user mode, or add a scheduler. The descriptor and TSS helpers are construction foundations only.
-The normal make check target builds the artifacts and focused tests, boots QEMU with the documented timeout, captures fresh build/serial.log evidence, and validates the required startup, architectural-state, memory-accounting, deferred-feature, and controlled-halt lines.
+Implemented:
+
+- A physical-frame bitmap core with 4096-byte alignment.
+- Explicit separation between usable type-0 memory and all other Limine types.
+- Conservative reservation of frame zero and caller-supplied reserved ranges.
+- Overflow-safe range validation, bitmap-capacity checks, overlapping-region rejection, exhaustion handling, and strict free validation.
+- Freestanding deterministic tests for empty maps, multiple regions, reserved gaps, unaligned and zero-sized regions, overflow, exhaustion, alignment, reserved exclusion, invalid frees, duplicate frees, and reuse.
+- Kernel compilation of the PMM core without activating it.
+
+The allocator is unit-tested only. It is not initialized from the live boot map because this repository lacks verified physical reservations for the kernel image, Limine metadata, modules, framebuffer, and a safe bitmap location. Bootloader-reclaimable regions therefore remain unavailable.
 
 ## Reproducible commands
 
-Install in Ubuntu under WSL2:
-
-    wsl --update
-    wsl -d Ubuntu -- sudo apt update
-    wsl -d Ubuntu -- sudo apt install -y gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu make xorriso qemu-system-x86 git curl ca-certificates
-
-Verify:
-
-    wsl -d Ubuntu -- bash -lc 'command -v x86_64-linux-gnu-gcc x86_64-linux-gnu-ld make xorriso qemu-system-x86_64'
-
-Obtain pinned assets:
-
-    make limine-assets
-
-Build and normal boot:
-
     make clean
     make
-    rm -f build/serial.log
-    timeout 8s qemu-system-x86_64 -M q35 -m 128M -serial file:build/serial.log -display none -no-reboot -no-shutdown -boot d -cdrom build/nexus.iso
-    bash tests/check-serial.sh build/serial.log build/nexus.elf build/nexus.iso
     make test-memory-accounting
+    make test-physical-memory
     make test-descriptors
     make check
 
-Controlled exception boot:
+make check builds the kernel and tests, removes stale build/serial.log, boots QEMU with -M q35 -m 128M and serial file output for eight seconds, accepts only timeout status 124, and then runs tests/check-serial.sh with the serial log, kernel ELF, and ISO. The checker requires fresh evidence and all existing architectural, memory-accounting, deferred-feature, and controlled-halt diagnostics.
+
+Exception regression:
 
     make clean
     make EXCEPTION_TEST=1
@@ -58,12 +44,12 @@ Controlled exception boot:
     timeout 8s qemu-system-x86_64 -M q35 -m 128M -serial file:build/serial-exception.log -display none -no-reboot -no-shutdown -boot d -cdrom build/nexus.iso
     bash tests/check-exception.sh build/serial-exception.log
 
-## Phase 2B evidence
+## Phase 2C evidence
 
-On 2026-10-22, the default build completed and QEMU booted the kernel. The serial log reported ring-0 selectors CS=0x28, DS/ES/SS=0x30, TR=0x38, GDTR limit 0x47, an initially empty IDTR, and active inherited long-mode paging with CR3=0x7f9b000. The normal serial check passed, the memory-accounting and descriptor tests passed, and git diff --check passed. The controlled exception procedure remains required after the final default rebuild and must continue to pass; it does not run during normal startup.
+The PMM and existing freestanding tests pass. The normal kernel build and QEMU boot continue to pass, including fresh serial evidence, inherited architectural-state diagnostics, Limine memory accounting, the unit-tested-only PMM status, deferred feature messages, and controlled halt. The invalid-opcode QEMU regression continues to report vector 6 and reaches fatal controlled halt.
 
-QEMU is terminated by the eight-second timeout because the guest intentionally remains in a halt loop. This is expected and is not a guest shutdown result.
+## Phase 2D — recommended next milestone
 
-## Phase 2C — recommended next milestone
+Define and review physical reservations and page-table ownership. Establish how Limine-provided physical addresses relate to the higher-half kernel mapping, where PMM metadata can be safely stored and mapped, and how kernel/module/framebuffer ranges are discovered. Only after that review should the PMM core be integrated or used to allocate a dedicated TSS stack or page-table structures.
 
-Design and review ownership of a NEXUS GDT/TSS and page-table subsystem, including allocation and mapping requirements for a dedicated TSS stack. Validate the design before any LGDT, LTR, CR3, or page-table mutation. Scheduling, IPC, user mode, service supervision, and recovery remain out of scope.
+No scheduler, IPC, user mode, service supervision, or recovery should begin before these memory-safety prerequisites are established.

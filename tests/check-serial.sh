@@ -25,6 +25,7 @@ test "$(grep -Ec '^\[mem\] base=0x[0-9a-fA-F]+ length=0x[0-9a-fA-F]+ type=0x[0-9
 grep -Eq '^\[mem\] usable regions: [1-9][0-9]*[[:space:]]*$' "$log"
 grep -Eq '^\[mem\] usable bytes: [1-9][0-9]*[[:space:]]*$' "$log"
 grep -Eq '^\[mem\] usable MiB: [1-9][0-9]*[[:space:]]*$' "$log"
+grep -F "[init] physical memory allocator: unit-tested only; runtime integration deferred" "$log" >/dev/null
 grep -F "[init] scheduler: deferred to Phase 2" "$log" >/dev/null
 grep -F "[init] IPC and recovery: deferred to later phases" "$log" >/dev/null
 grep -F "[halt] initialization complete; controlled halt" "$log" >/dev/null

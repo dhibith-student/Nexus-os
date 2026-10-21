@@ -1,39 +1,38 @@
 # NEXUS OS architecture
 
-## Phase 2B setup
+## Phase 2C memory-map audit
 
-The target is x86-64 and the boot protocol is Limine v12.9.3. Limine supplies the ELF entry path and structured boot requests, including the memory map. The build produces a higher-half ELF64 kernel and a BIOS/UEFI-capable ISO using pinned assets; no physical disk is modified.
+The kernel requests Limine's memory-map response through the request structure in include/limine.h. Limine supplies an entry count and an array of pointers to entries containing physical base, byte length, and protocol memory type. Type 0 is the only type treated as immediately usable by the existing accounting code and the PMM core. Reserved, ACPI reclaimable, ACPI NVS, bad memory, bootloader reclaimable, executable/modules, and framebuffer types are excluded.
 
-The WSL toolchain is x86_64-linux-gnu-gcc/ld/objcopy, with an equivalent x86_64-elf-* toolchain supported by the Makefile. Kernel compilation is freestanding C plus minimal assembly with -ffreestanding, -fno-stack-protector, -fno-pie, -mcmodel=kernel, -mno-red-zone, and MMX/SSE disabled. Linking uses -nostdlib and linker.ld; the image is linked at 0xffffffff80000000.
+The current response does not identify the physical ranges occupied by the linked kernel image, Limine response structures, modules, framebuffer backing storage, or the allocator's own metadata. The linker places the kernel at the higher-half virtual address 0xffffffff80000000, while the source does not establish a physical load range or a complete virtual-to-physical mapping. Therefore the boot path does not instantiate a physical allocator. No memory is freed merely because it appears in a type-0 interval.
 
-Limine transfers control to _start, which calls kernel_main. The kernel is in ring 0 and uses the existing boot stack. There is no privilege transition, process isolation, context switching, scheduler, allocator, or user address space. COM1 at I/O port 0x3f8 is configured for 115200 8N1.
+## Physical-memory core
 
-## Inherited GDT, TSS, and IDT state
+kernel/physical_memory.c implements a fixed-region bitmap allocator core for later integration:
 
-Phase 2B reads, but does not replace, the architectural state established before kernel_main. The diagnostic uses SGDT, SIDT, STR, segment-register reads, and control-register reads. In the verified QEMU boot it observed:
+- Usable entries are converted to full 4096-byte frames using align-up for the base and align-down for the exclusive end.
+- Zero-sized and sub-frame usable intervals contribute no frames.
+- Frame zero is permanently reserved.
+- Explicit reserved ranges are validated for base-plus-length overflow and reserve every overlapping frame.
+- Overlapping normalized usable regions are rejected rather than double-counted.
+- The caller supplies separate allocation and permanent-reservation bitmaps; no dynamic allocation bootstraps the core.
+- Allocation scans regions in memory-map order and returns aligned physical addresses.
+- Free accepts only aligned addresses belonging to a known frame, rejects frame zero, reserved frames, duplicate frees, and out-of-range addresses.
+- Exhaustion returns failure.
+- Bitmap capacity and all address/sum calculations are checked for overflow.
 
-- CS=0x28 and DS/ES/SS=0x30, all used at ring 0.
-- TR=0x38 and GDTR limit=0x47, indicating that Limine supplied a GDT and loaded a task-register selector before entry.
-- GDTR base=0xffff800000018538 in this QEMU run. This address and selector layout are observations, not hard-coded kernel assumptions.
-- IDTR base=0 and limit=0 before NEXUS initializes its existing exception IDT.
-- No TSS descriptor is loaded or owned by NEXUS. The nonzero TR is reported only; its TSS stack fields are not used for a privilege transition.
+This core is compiled into the kernel to verify freestanding integration, but it is not invoked by kernel_main. Its bitmap pointers are not physical addresses and must not be dereferenced as physical memory by the kernel without a future mapping plan.
 
-NEXUS therefore preserves the inherited GDT, TSS, segment selectors, and boot stack. It does not execute LGDT, LTR, reload segment registers, or enable user-mode transitions.
+## Existing boot and architectural state
 
-## Paging state
+The target is x86-64 with Limine v12.9.3. Limine transfers control to _start in ring 0 with the inherited boot stack, GDT/TSS selectors, and long-mode paging. The kernel reads but does not replace GDT, TSS, IDT state before installing its existing five exception gates, CR3, or page tables. COM1 at I/O port 0x3f8 is configured for 115200 8N1.
 
-NEXUS reads CR0, CR2, CR3, CR4, and EFER. The verified QEMU run reported CR0=0x80010011, CR2=0, CR3=0x7f9b000, CR4=0x20, and EFER=0xd00. CR0.PG, CR4.PAE, and EFER.LMA show inherited long-mode paging. The kernel does not walk the inherited page tables, replace CR3, change mappings, enable or disable paging, allocate pages, or claim ownership of physical memory. The linker address and boot behavior are compatible with the mappings supplied by Limine, but the current diagnostic does not establish a complete mapping inventory.
+The tested QEMU run reports CS=0x28, DS/ES/SS=0x30, TR=0x38, active CR0.PG/CR4.PAE/EFER.LMA, and a nonzero inherited CR3. These are observed diagnostics, not portable constants.
 
-## Descriptor and TSS construction foundations
+## Tests and limitations
 
-The descriptor module provides a pure constructor for 64-bit segment descriptors and a packed 104-byte x86-64 TSS layout initializer. Unit tests validate the expected kernel code/data descriptor encodings and zeroed TSS fields with the I/O-map base set to the structure size. These helpers are not installed into the processor and do not constitute privilege separation.
+tests/test-physical-memory.c uses freestanding synthetic Limine fixtures and tests empty maps, multiple usable regions, reserved gaps, unaligned boundaries, zero-sized regions, overflow, bitmap exhaustion, alignment, reserved-frame exclusion, invalid frees, duplicate frees, and reuse after a valid free. It does not claim that the live Limine map is safe for allocation.
 
-## Existing exception and memory diagnostics
+Before activating the core, NEXUS must obtain reliable physical reservations for the kernel, bootloader data, modules, framebuffer and allocator metadata, plus a safe mapped location for bitmaps. It must also define page-table ownership and mappings. A dedicated TSS stack cannot safely be allocated until those prerequisites exist.
 
-The kernel retains interrupt gates for vectors 0, 6, 8, 13, and 14. Their assembly stubs normalize error-code and non-error-code entries and the C dispatcher reports useful state before halting. Limine memory accounting validates pointers within the boot-stage limits, counts only type-0 usable entries, checks overflow, and reports bytes and integer MiB.
-
-## Planned but unimplemented interfaces
-
-Task records will later carry IDs, state, saved context, address-space references, and scheduling metadata. IPC will use bounded copied messages and generation-checked endpoints. A service registry and supervisor will track instances, bounded restart policy, endpoint generations, and recovery states. User-mode isolation requires explicit privilege transitions, page-table ownership, and tests and is not claimed.
-
-Deferred: NEXUS-owned GDT/TSS installation, TSS stack allocation/mapping, complete exception coverage, external interrupts, page-table management, physical/virtual allocation, task switching, scheduling, IPC, privilege separation, services, supervision, endpoint reconnection, and recovery tests.
+Scheduling, IPC, user-mode isolation, memory protection, service supervision, and recovery remain deferred.
