@@ -15,6 +15,8 @@ grep -F "NEXUS OS - Phase 2A" "$log" >/dev/null
 grep -F "[init] serial console: ready" "$log" >/dev/null
 grep -F "[init] kernel entry: reached" "$log" >/dev/null
 grep -F "[init] architectural state: inspected; inherited GDT/TSS/paging preserved" "$log" >/dev/null
+grep -F "[kernel] linked virtual image: start=" "$log" >/dev/null
+grep -F "[kernel] physical load range: unproven by current linker and boot requests" "$log" >/dev/null
 grep -F "[arch] segments cs=" "$log" >/dev/null
 grep -F "[arch] gdtr base=" "$log" >/dev/null
 grep -F "[arch] paging cr0=" "$log" >/dev/null

@@ -1,12 +1,18 @@
 # NEXUS OS
 
-NEXUS OS is a real freestanding x86-64 kernel prototype. Phase 2C adds a conservative, unit-tested physical-memory allocator core. The running kernel still reports diagnostics and halts; it does not activate physical allocation.
+NEXUS OS is a real freestanding x86-64 kernel prototype. Phase 2D audits physical ownership and paging without enabling a live allocator.
 
 ## Current status
 
-The kernel boots through Limine v12.9.3, reports inherited x86-64 architectural state, handles the existing five exception vectors, reports the Limine memory map and usable totals, and reaches controlled halt. The PMM core accepts only Limine type-0 usable regions, aligns them to 4096-byte frames, always reserves frame zero, and applies explicit caller-supplied reserved ranges. It uses caller-supplied allocation and reservation bitmaps and rejects unsafe or ambiguous inputs.
+The kernel boots through Limine v12.9.3, reports inherited x86-64 architectural state, prints the Limine memory map and usable totals, reports its linked virtual image bounds, and reaches controlled halt. The physical-memory core remains unit-tested only. It is not initialized from the live map because the repository cannot yet prove physical reservations for the kernel image, Limine data, modules, framebuffer, or allocator metadata.
 
-The PMM core is compiled into the kernel but is not called by the boot path. This is intentional: the current project cannot yet prove the physical ranges occupied by the linked kernel, Limine data, modules, framebuffer, or a safe physical location for the allocator bitmap. Bootloader-reclaimable memory remains reserved. No heap, page-table mutation, CR3 change, scheduler, IPC, user mode, supervision, or recovery exists.
+The linker-derived image is a virtual span from 0xffffffff80000000 to 0xffffffff80005010, 20496 bytes including BSS and alignment gaps. Its physical load range is explicitly unproven. The running kernel does not equate these virtual addresses with physical addresses.
+
+## Phase 2D conclusions
+
+The Limine request retained by NEXUS is only the memory-map request. The header defines type 0 as usable; reserved, ACPI, bad-memory, bootloader-reclaimable, executable/modules, and framebuffer entries are excluded from immediate allocation. No module, framebuffer, or boot-info response is currently requested or retained.
+
+The ELF has entry point 0xffffffff80001000. Its loadable segment PhysAddr fields equal the higher-half virtual addresses because the linker has no physical AT mapping. This is not evidence of physical placement. NEXUS therefore does not activate PMM or reclaim bootloader memory.
 
 ## Toolchain and commands
 
@@ -16,10 +22,11 @@ The documented WSL environment uses x86_64-linux-gnu-gcc/binutils, GNU Make, Lim
     make
     make test-memory-accounting
     make test-physical-memory
+    make test-memory-ranges
     make test-descriptors
     make check
 
-make check creates fresh build/serial.log by booting QEMU with the documented headless settings, accepts only the expected timeout, and validates the serial assertions. The invalid-opcode regression remains separate:
+make check creates fresh build/serial.log with the documented headless QEMU settings, accepts only the expected timeout, and validates all existing diagnostics. The invalid-opcode regression remains separate:
 
     make clean
     make EXCEPTION_TEST=1

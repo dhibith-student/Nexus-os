@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "arch_state.h"
 #include "exceptions.h"
+#include "kernel_image.h"
 #include "limine.h"
 #include "memory_accounting.h"
 #include "serial.h"
@@ -48,6 +49,7 @@ void kernel_main(void) {
     nexus_arch_state_read(&inherited_state);
     nexus_arch_state_print(&inherited_state);
     serial_write("[init] architectural state: inspected; inherited GDT/TSS/paging preserved\r\n");
+    nexus_kernel_image_print();
 
     exceptions_init();
     serial_write("[init] exception diagnostics: ready (vectors 0, 6, 8, 13, 14)\r\n");

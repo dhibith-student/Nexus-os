@@ -1,38 +1,47 @@
 # NEXUS OS architecture
 
-## Phase 2C memory-map audit
+## Phase 2D physical ownership audit
 
-The kernel requests Limine's memory-map response through the request structure in include/limine.h. Limine supplies an entry count and an array of pointers to entries containing physical base, byte length, and protocol memory type. Type 0 is the only type treated as immediately usable by the existing accounting code and the PMM core. Reserved, ACPI reclaimable, ACPI NVS, bad memory, bootloader reclaimable, executable/modules, and framebuffer types are excluded.
+NEXUS requests only the Limine memory-map response through include/limine.h. The response contains an entry count and pointers to entries with physical base, byte length, and memory type. Type 0 is the only type treated as usable by memory accounting and by the offline PMM core. Types 1 through 7 represented in this repository are reserved, ACPI reclaimable, ACPI NVS, bad memory, bootloader reclaimable, executable/modules, and framebuffer respectively; none is immediately allocatable.
 
-The current response does not identify the physical ranges occupied by the linked kernel image, Limine response structures, modules, framebuffer backing storage, or the allocator's own metadata. The linker places the kernel at the higher-half virtual address 0xffffffff80000000, while the source does not establish a physical load range or a complete virtual-to-physical mapping. Therefore the boot path does not instantiate a physical allocator. No memory is freed merely because it appears in a type-0 interval.
+The current source does not request Limine module, framebuffer, higher-half relocation, or complete boot-information responses. Consequently it has no source-level physical ranges for Limine response storage, modules, framebuffer backing memory, or other boot objects. Bootloader-reclaimable entries remain reserved because their lifetime and safe-reclamation point have not been established.
 
-## Physical-memory core
+## ELF and linker evidence
 
-kernel/physical_memory.c implements a fixed-region bitmap allocator core for later integration:
+The linker script starts the image at virtual address 0xffffffff80000000 and now exports __kernel_image_start and __kernel_image_end. readelf on build/nexus.elf reports:
 
-- Usable entries are converted to full 4096-byte frames using align-up for the base and align-down for the exclusive end.
-- Zero-sized and sub-frame usable intervals contribute no frames.
-- Frame zero is permanently reserved.
-- Explicit reserved ranges are validated for base-plus-length overflow and reserve every overlapping frame.
-- Overlapping normalized usable regions are rejected rather than double-counted.
-- The caller supplies separate allocation and permanent-reservation bitmaps; no dynamic allocation bootstraps the core.
-- Allocation scans regions in memory-map order and returns aligned physical addresses.
-- Free accepts only aligned addresses belonging to a known frame, rejects frame zero, reserved frames, duplicate frees, and out-of-range addresses.
-- Exhaustion returns failure.
-- Bitmap capacity and all address/sum calculations are checked for overflow.
+- Entry point: 0xffffffff80001000.
+- Linked virtual image: start 0xffffffff80000000, end 0xffffffff80005010, span 0x5010 (20496) bytes.
+- Limine-request segment: VMA/PAddr fields 0xffffffff80000000, file/memory size 0x80, read/write.
+- Text segment: VMA/PAddr fields 0xffffffff80001000, file/memory size 0x12b1, read/execute.
+- Read-only segment: VMA/PAddr fields 0xffffffff80003000, file/memory size 0x63a, read-only.
+- BSS segment: VMA/PAddr fields 0xffffffff80004000, file size 0, memory size 0x1010, read/write.
 
-This core is compiled into the kernel to verify freestanding integration, but it is not invoked by kernel_main. Its bitmap pointers are not physical addresses and must not be dereferenced as physical memory by the kernel without a future mapping plan.
+The section layout contains .limine_requests, .text, .rodata, and .bss. The ELF PAddr fields equal the higher-half VMAs because the linker has no AT physical-load expression. They are therefore not accepted as physical addresses. The exported image symbols are virtual linked bounds and include BSS; they do not identify a physical reservation.
 
-## Existing boot and architectural state
+## Runtime paging and address evidence
 
-The target is x86-64 with Limine v12.9.3. Limine transfers control to _start in ring 0 with the inherited boot stack, GDT/TSS selectors, and long-mode paging. The kernel reads but does not replace GDT, TSS, IDT state before installing its existing five exception gates, CR3, or page tables. COM1 at I/O port 0x3f8 is configured for 115200 8N1.
+QEMU serial diagnostics report CR0=0x80010011, CR2=0, CR3=0x7f9b000, CR4=0x20, and EFER=0xd00, confirming inherited long-mode paging bits in this tested boot. NEXUS does not replace CR3, walk page tables, change mappings, or dereference arbitrary physical addresses. A canonical-looking virtual address is not treated as a physical address.
 
-The tested QEMU run reports CS=0x28, DS/ES/SS=0x30, TR=0x38, active CR0.PG/CR4.PAE/EFER.LMA, and a nonzero inherited CR3. These are observed diagnostics, not portable constants.
+The runtime reports the linked virtual image and explicitly reports its physical load range as unproven. The current mapping inventory is unknown: source and runtime evidence do not establish which physical pages back the higher-half image or where Limine boot objects are mapped.
 
-## Tests and limitations
+## Reservation model
 
-tests/test-physical-memory.c uses freestanding synthetic Limine fixtures and tests empty maps, multiple usable regions, reserved gaps, unaligned boundaries, zero-sized regions, overflow, bitmap exhaustion, alignment, reserved-frame exclusion, invalid frees, duplicate frees, and reuse after a valid free. It does not claim that the live Limine map is safe for allocation.
+A future PMM reservation set must include:
 
-Before activating the core, NEXUS must obtain reliable physical reservations for the kernel, bootloader data, modules, framebuffer and allocator metadata, plus a safe mapped location for bitmaps. It must also define page-table ownership and mappings. A dedicated TSS stack cannot safely be allocated until those prerequisites exist.
+- Frame zero.
+- The complete physical kernel image, including loaded sections, BSS, and relevant alignment padding.
+- Limine response/request storage and any retained boot information.
+- All modules and their backing ranges.
+- Framebuffer memory, if requested and present.
+- Allocator bitmaps and metadata.
+- Bootloader-reclaimable memory until all dependent information is copied and a verified reclamation point exists.
+- Other firmware/platform ranges not explicitly identified as usable.
 
-Scheduling, IPC, user-mode isolation, memory protection, service supervision, and recovery remain deferred.
+The existing PMM core accepts explicit reserved physical ranges and is unit-tested, but it is not initialized from the live map. The missing physical kernel range, missing boot-object requests, unknown mappings, and unknown safe bitmap location prevent safe integration.
+
+## Pure range tests
+
+memory_ranges.c provides checked half-open range construction, reversed/overflow rejection, adjacency-aware overlap tests, frame alignment, and a reservation set that rejects duplicate or overlapping reservations while accepting empty no-op ranges. Tests cover boundaries, overflow, alignment, kernel-image overlap, reservations, and unsupported memory types. These tests do not perform privileged operations.
+
+A dedicated TSS stack or owned page-table structures cannot be allocated until physical reservations, page-table ownership, and a safe mapped PMM metadata location are established. Scheduling, IPC, user-mode isolation, service supervision, and recovery remain deferred.
