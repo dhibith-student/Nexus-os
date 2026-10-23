@@ -49,6 +49,17 @@ A dedicated TSS stack or owned page-table structures cannot be allocated until p
 
 ## Phase 2E evidence and limits
 
-The normal QEMU boot reported one framebuffer and no module response. The framebuffer range was converted from its HHDM pointer using the protocol offset and included in the conservative audit; no framebuffer pixels were accessed. The kernel physical image reported base 0x7f44000, end 0x7f49010, and size 20496 bytes. These are runtime observations for the tested boot, not hard-coded addresses.
+The normal QEMU boot reported one framebuffer and no module response. The framebuffer range was converted from its HHDM pointer using the protocol offset and included in the conservative audit; no framebuffer pixels were accessed. The kernel physical image reported base 0x7f42000, end 0x7f48010, and size 24592 bytes. These are runtime observations for the tested boot, not hard-coded addresses.
 
 Limine supports bootloader-info and executable-file responses, but neither was requested because they would not establish a physical load range beyond executable-address. The response model is bounded to 256 optional entries, rejects null arrays for nonzero counts, rejects HHDM underflow and overflowing ranges, and treats absent module/framebuffer responses as valid optional cases.
+
+
+## Phase 2F inherited page-table audit
+
+The current boot reports CR0=0x80010011, CR3=0x7f84000, CR4=0x20, and EFER=0xd00. CR0.PG, CR4.PAE, and EFER.LMA are set; CR4.LA57 is clear, so the runtime audit uses four-level paging with 48-bit canonical virtual addresses. The CR3 physical address is formed by masking the architectural low flags with 0x000ffffffffff000.
+
+The audit first checks canonical arithmetic, validates the masked CR3 page against a type-5 bootloader-reclaimable memory-map entry, forms its HHDM virtual address, and then walks at most four levels. Every descendant table page must also be a 4 KiB-aligned type-5 page before it is dereferenced. Present level-3 and level-2 large pages are handled; non-present, malformed, noncanonical, unsupported, or unproven paths produce a diagnostic rather than a dereference. No CR3, page-table entry, TLB, paging mode, GDT, TSS, or privilege state is changed.
+
+In the fresh QEMU boot the root candidate was physical 0x7f84000 and HHDM virtual 0xffff800007f84000. Root coverage was confirmed with a 4 KiB mapping, and the linked kernel start was confirmed at physical 0x7f42000 through a level-1 4 KiB mapping. This establishes safe access for those inspected pages only. It does not prove that every physical page is HHDM-mapped or that NEXUS owns any page tables.
+
+The PMM prerequisite checklist remains: reserve the full kernel image; retain bootloader-reclaimable response and page-table storage; reserve memory-map metadata, modules, framebuffer, bitmap and allocator metadata; validate all page-table pages and future runtime objects; and establish safe virtual access for every object before activation. A dedicated TSS stack and owned page tables remain deferred.

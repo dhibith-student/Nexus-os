@@ -17,13 +17,13 @@ DESCRIPTOR_TEST := $(BUILD)/descriptor-test
 PMM_TEST := $(BUILD)/physical-memory-test
 RANGE_TEST := $(BUILD)/memory-ranges-test
 
-.PHONY: all clean limine-assets check test-memory-accounting test-physical-memory test-memory-ranges test-descriptors test-boot-info run
+.PHONY: all clean limine-assets check test-memory-accounting test-physical-memory test-memory-ranges test-descriptors test-boot-info test-paging run
 all: $(ISO)
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/main.o: kernel/main.c include/limine.h include/exceptions.h include/memory_accounting.h include/serial.h include/arch_state.h include/kernel_image.h include/boot_info.h include/memory_ranges.h
+$(BUILD)/main.o: kernel/main.c include/limine.h include/exceptions.h include/memory_accounting.h include/serial.h include/arch_state.h include/kernel_image.h include/boot_info.h include/memory_ranges.h include/paging_audit.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/serial.o: kernel/serial.c include/serial.h | $(BUILD)
@@ -50,6 +50,9 @@ $(BUILD)/kernel_image.o: kernel/kernel_image.c include/kernel_image.h include/li
 $(BUILD)/boot_info.o: kernel/boot_info.c include/boot_info.h include/memory_ranges.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/paging_audit.o: kernel/paging_audit.c include/paging_audit.h include/limine.h include/memory_accounting.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/exceptions.o: kernel/exceptions.c include/exceptions.h include/serial.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -59,8 +62,8 @@ $(BUILD)/entry.o: arch/x86_64/entry.S | $(BUILD)
 $(BUILD)/exceptions-asm.o: arch/x86_64/exceptions.S | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/memory_ranges.o $(BUILD)/kernel_image.o $(BUILD)/boot_info.o $(BUILD)/exceptions.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/memory_ranges.o $(BUILD)/kernel_image.o $(BUILD)/boot_info.o $(BUILD)/exceptions.o
+$(KERNEL): $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/memory_ranges.o $(BUILD)/kernel_image.o $(BUILD)/boot_info.o $(BUILD)/paging_audit.o $(BUILD)/exceptions.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(BUILD)/entry.o $(BUILD)/exceptions-asm.o $(BUILD)/main.o $(BUILD)/serial.o $(BUILD)/memory_accounting.o $(BUILD)/descriptors.o $(BUILD)/arch_state.o $(BUILD)/physical_memory.o $(BUILD)/memory_ranges.o $(BUILD)/kernel_image.o $(BUILD)/boot_info.o $(BUILD)/paging_audit.o $(BUILD)/exceptions.o
 	$(OBJCOPY) --only-keep-debug $@ $(BUILD)/nexus.debug
 
 $(ISO): $(KERNEL) limine.conf $(LIMINE)/limine-bios-cd.bin $(LIMINE)/limine-uefi-cd.bin $(LIMINE)/limine-bios.sys
@@ -109,7 +112,13 @@ $(BUILD)/boot-info-test: tests/test-boot-info.c kernel/boot_info.c kernel/memory
 test-boot-info: $(BUILD)/boot-info-test
 	$(BUILD)/boot-info-test
 
-check: $(ISO) test-memory-accounting test-physical-memory test-memory-ranges test-descriptors test-boot-info
+$(BUILD)/paging-test: tests/test-paging.c kernel/paging_audit.c kernel/memory_ranges.c $(BUILD)/memory-test-start.o include/paging_audit.h include/limine.h include/memory_accounting.h include/memory_ranges.h include/physical_memory.h | $(BUILD)
+	$(CC) $(CFLAGS) -nostdlib -static -no-pie -Wl,-e,_start tests/test-paging.c kernel/paging_audit.c kernel/memory_ranges.c $(BUILD)/memory-test-start.o -o $@
+
+test-paging: $(BUILD)/paging-test
+	$(BUILD)/paging-test
+
+check: $(ISO) test-memory-accounting test-physical-memory test-memory-ranges test-descriptors test-boot-info test-paging
 	@test -s $(KERNEL)
 	@test -s $(ISO)
 	@rm -f $(SERIAL_LOG)

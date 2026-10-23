@@ -75,3 +75,14 @@ Implemented and verified:
 - Conservative reservation audit for frame zero, the full kernel image, bootloader-reclaimable memory, and identified framebuffer/module ranges.
 
 The PMM remains unit-tested only. Limine response storage is retained by leaving bootloader-reclaimable regions reserved; no reclamation point or bitmap placement has been activated. The linker still has no AT() physical-load expression because Limine supplies the physical base at runtime. A future phase must establish page-table ownership and a safe mapped bitmap location before PMM integration, TSS-stack allocation, or owned page tables. Do not add scheduling, IPC, user mode, service supervision, or recovery.
+
+
+## Phase 2F — complete as an inherited page-table audit
+
+Implemented and verified:
+
+- Pure helpers for 48/57-bit canonical-address checks, CR3 physical masking, page-table entry parsing, 2 MiB/1 GiB large-page validation, HHDM conversion, unsupported-mode rejection, and bounded response-map checks.
+- A read-only runtime walk gated by the actual memory map: CR3 and descendant table pages must be aligned, within type-5 bootloader-reclaimable ranges, and reachable through the reported HHDM before dereference.
+- Fresh QEMU evidence confirming the inherited four-level root, HHDM root coverage, and kernel virtual-to-physical mapping consistency.
+
+No page table is owned or modified by NEXUS. The PMM remains unit-tested only. The next prerequisite is a complete ownership and reservation design for allocator metadata and page-table pages before any CR3 transition or runtime allocation.

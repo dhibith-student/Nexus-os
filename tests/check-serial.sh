@@ -21,6 +21,10 @@ grep -F "[arch] segments cs=" "$log" >/dev/null
 grep -F "[arch] gdtr base=" "$log" >/dev/null
 grep -F "[arch] paging cr0=" "$log" >/dev/null
 grep -F "[arch] paging mode: inherited long mode paging; NEXUS did not replace CR3" "$log" >/dev/null
+grep -Eq "^\[paging\] CR3 root candidate: physical=0x[0-9a-fA-F]+ hhdm=0x[0-9a-fA-F]+[[:space:]]*$" "$log"
+grep -Eq "^\[paging\] HHDM root coverage: confirmed; page_size=(4096|2097152|1073741824)[[:space:]]*$" "$log"
+grep -Eq "^\[paging\] kernel mapping: physical=0x[0-9a-fA-F]+ page_size=(4096|2097152|1073741824) level=[1-4][[:space:]]*$" "$log"
+grep -F "[paging] kernel mapping consistency: confirmed" "$log" >/dev/null
 grep -Eq "^\[boot\] HHDM offset: 0x[0-9a-fA-F]+ \(protocol-provided virtual offset\)[[:space:]]*$" "$log"
 grep -F "[boot] modules: no response; no modules configured" "$log" >/dev/null
 grep -Eq "^\[boot\] framebuffer: count=[1-9][0-9]*[[:space:]]*$" "$log"

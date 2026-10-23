@@ -1,6 +1,6 @@
 # NEXUS OS
 
-NEXUS OS is a real freestanding x86-64 kernel prototype. Phase 2E audits Limine boot information and physical load ownership without enabling a live allocator.
+NEXUS OS is a real freestanding x86-64 kernel prototype. Phase 2F audits inherited page tables and safe access without installing NEXUS-owned tables or enabling a live allocator.
 
 ## Current status
 
@@ -42,3 +42,10 @@ The timeout is expected because the guest intentionally halts. Images are dispos
 The pinned Limine v12.9.3 protocol header and documentation define the HHDM, executable-address, module, and framebuffer responses used by this phase. The runtime reports HHDM offset 0xffff800000000000, one framebuffer, and no modules. Response pointers are used only as protocol-provided virtual pointers; the kernel does not dereference arbitrary physical addresses.
 
 The reservation audit retains frame zero, the complete physical kernel image, all bootloader-reclaimable memory, and identified module/framebuffer ranges. Bootloader-reclaimable memory covers retained Limine response data under the protocol, but it is not reclaimed. The audit is diagnostic only, so PMM activation remains deferred.
+
+
+## Phase 2F conclusions
+
+The tested QEMU boot has CR0=0x80010011, CR3=0x7f84000 after architectural flag masking, CR4=0x20, and EFER=0xd00. These bits establish inherited four-level long-mode paging for this boot; NEXUS did not load CR3 or modify entries. The bounded read-only walk proved that the CR3 root page is in a Limine bootloader-reclaimable range and is reachable through the reported HHDM. It also proved that the linked kernel start maps to physical 0x7f42000 at a 4 KiB level-1 mapping.
+
+This is not page-table ownership. The page tables remain Limine-owned, the proof depends on the current response and memory map, and HHDM arithmetic alone is not treated as mapping proof. PMM activation remains deferred until bitmap storage, all retained boot objects, page-table pages, and future runtime objects have safe reservations and access proofs.

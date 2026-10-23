@@ -6,6 +6,7 @@
 #include "limine.h"
 #include "memory_accounting.h"
 #include "memory_ranges.h"
+#include "paging_audit.h"
 #include "serial.h"
 #ifndef NEXUS_EXCEPTION_TEST
 #define NEXUS_EXCEPTION_TEST 0
@@ -39,6 +40,59 @@ static int build_reservation_model(const struct limine_memmap_response *map,cons
     if(framebuffer!=0){for(uint64_t i=0;i<framebuffer->framebuffer_count;++i){struct limine_framebuffer *f=framebuffer->framebuffers[i];uint64_t size;if(f->height!=0&&f->pitch>~(uint64_t)0/f->height)complete=0;else{size=f->pitch*f->height;if(hhdm==0||!nexus_boot_hhdm_range_to_physical(hhdm->offset,(uint64_t)(uintptr_t)f->address,size,&range)||!reserve_physical(&set,range))complete=0;}}}
     *count=set.count;return complete;
 }
+extern char __kernel_image_start[];
+
+static void print_paging_audit(const struct limine_memmap_response *map,
+                               const struct nexus_arch_state *state,
+                               const struct limine_hhdm_response *hhdm,
+                               const struct limine_executable_address_response *exec) {
+    uint64_t root_physical;
+    uint64_t root_virtual;
+    struct nexus_paging_mapping mapping;
+    int status;
+
+    if (hhdm == 0 ||
+        !nexus_paging_cr3_physical(state->cr3, &root_physical) ||
+        !nexus_paging_physical_to_hhdm(hhdm->offset, root_physical, 48, &root_virtual)) {
+        serial_write("[paging] CR3 root: not proven safely accessible through HHDM\r\n");
+        return;
+    }
+    serial_write("[paging] CR3 root candidate: physical="); serial_hex(root_physical);
+    serial_write(" hhdm="); serial_hex(root_virtual); serial_write("\r\n");
+
+    status = nexus_paging_find_mapping(map, hhdm->offset, state->cr0, state->cr3,
+                                       state->cr4, state->efer, root_virtual,
+                                       &mapping);
+    if (status == NEXUS_PAGING_WALK_MAPPED) {
+        serial_write("[paging] HHDM root coverage: confirmed; page_size=");
+        serial_dec(mapping.page_size); serial_write("\r\n");
+    } else {
+        serial_write("[paging] HHDM root coverage: not proven by bounded table walk\r\n");
+    }
+
+    status = nexus_paging_find_mapping(map, hhdm->offset, state->cr0, state->cr3,
+                                       state->cr4, state->efer,
+                                       (uint64_t)(uintptr_t)__kernel_image_start,
+                                       &mapping);
+    if (status == NEXUS_PAGING_WALK_MAPPED) {
+        uint64_t offset = (uint64_t)(uintptr_t)__kernel_image_start %
+                          mapping.page_size;
+        uint64_t physical = mapping.physical_base + offset;
+        serial_write("[paging] kernel mapping: physical="); serial_hex(physical);
+        serial_write(" page_size="); serial_dec(mapping.page_size);
+        serial_write(" level="); serial_dec(mapping.level); serial_write("\r\n");
+        struct nexus_memory_range expected;
+        if (nexus_kernel_image_physical_range(exec, &expected) &&
+            physical == expected.start) {
+            serial_write("[paging] kernel mapping consistency: confirmed\r\n");
+        } else {
+            serial_write("[paging] kernel mapping consistency: mismatch or physical source unavailable\r\n");
+        }
+    } else {
+        serial_write("[paging] kernel mapping: not proven by bounded table walk\r\n");
+    }
+}
+
 static void trigger_exception_test(void){
 #if NEXUS_EXCEPTION_TEST
     serial_write("[test] triggering invalid opcode exception\r\n");__asm__ volatile("ud2");
@@ -51,6 +105,7 @@ void kernel_main(void){
     exceptions_init();serial_write("[init] exception diagnostics: ready (vectors 0, 6, 8, 13, 14)\r\n");
     const struct limine_memmap_response *map=memmap_request.response;if(map==0||map->entries==0||map->entry_count>NEXUS_MAX_MEMMAP_ENTRIES)panic("invalid Limine memory-map response");
     print_memory_map(map);struct nexus_memory_summary summary;if(!nexus_memory_accounting(map,&summary))panic("memory accounting validation failed");
+    print_paging_audit(map,&state,hhdm_request.response,executable_address_request.response);
     serial_write("[mem] usable regions: ");serial_dec(summary.usable_regions);serial_write("\r\n[mem] usable bytes: ");serial_dec(summary.usable_bytes);serial_write("\r\n[mem] usable MiB: ");serial_dec(summary.usable_bytes/(1024ULL*1024ULL));serial_write("\r\n");
     print_boot_objects(hhdm_request.response,module_request.response,framebuffer_request.response);
     uint64_t reservations=0;int complete=build_reservation_model(map,executable_address_request.response,hhdm_request.response,module_request.response,framebuffer_request.response,&reservations);
